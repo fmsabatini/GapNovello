@@ -3,6 +3,8 @@ library(openxlsx)
 library(Taxonstand)
 library(zoo)
 
+# 
+
 ## Import, format and correct data
 flora0 <- readr::read_delim("../rawdata/inserimento_flora.csv", delim=";", ) %>% 
   select(-Plot) %>% 

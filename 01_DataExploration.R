@@ -2,11 +2,15 @@ library(tidyverse)
 library(betapart)
 library(patchwork)
 library(wesanderson)
+library(vegan)
 
 ### Ancillary functions ####
-
 ## Calculate rolling mean of change
-ch <- function(x){x[3]-x[1]}
+ch <- function(x){x[length(x)]-x[1]}
+
+## Pool species cover across consecutive years
+pool <- function(x){ifelse(sum(!is.na(x))>=2, max(x, na.rm=T), NA)}
+
 
 # Combine cover accounting for layers
 combine.cover <- function(x){
@@ -17,12 +21,38 @@ combine.cover <- function(x){
   return(x)
 }
 
+# Convert species x plot level to wide format
+flora_wide <- flora %>% 
+  filter(Layer=="U") %>% 
+  ## flatten vegetation layers
+  group_by(Quadrat, Species_resolved, Year) %>% 
+  summarize(Cover=combine.cover(Cover)) %>% 
+  pivot_wider(names_from=Species_resolved, values_from = "Cover", values_fill = 0) %>% 
+  unite("Quadrat_year", Quadrat, Year) %>% 
+  arrange(Quadrat_year) %>% 
+  column_to_rownames("Quadrat_year")
+
+plot_index <- sapply(rownames(flora_wide), function(x){strsplit(x, split = "_")[[1]][[1]]})
+
+
+## Pool species entries using a 3-year moving window
+flora_pooled <- flora %>% 
+  filter(Layer=="U") %>% 
+  dplyr::select(Year, Quadrat, Species_resolved, Cover) %>% 
+  complete(Year, nesting(Quadrat, Species_resolved)) %>% 
+  arrange(Quadrat, Species_resolved, Year) %>% 
+  group_by(Quadrat, Species_resolved) %>%
+  mutate(Cover_roll=rollapply(Cover, 3, pool, align="center", fill=NA)) %>% 
+  mutate(Cover_roll=coalesce(Cover, Cover_roll)) %>% 
+  mutate(Cover_roll=replace(Cover_roll, list=is.na(Cover_roll), values=0)) %>% 
+  dplyr::select(-Cover) %>% 
+  ungroup()
+
 
 
 ### General Description ####
-
 ### Graph of species abundances with time (by plot)
-ggplot(data=flora %>% 
+ggplot(data=flora_pooled %>% 
          filter(Layer=="U") %>% 
          filter(Quadrat=="GN") %>% 
          mutate(Species_resolved=factor(Species_resolved)) %>% 
@@ -197,6 +227,24 @@ flora_eff <- flora %>%
             by=c("Quadrat", "Treatment", "Series")) %>% 
   mutate(Beta_year=(1-SR/SR_acc))
 
+flora_eff <- flora_pooled %>% 
+  group_by(Quadrat, Year) %>% 
+  filter(Cover_roll>0) %>% 
+  summarize(SR=n()) %>%
+  arrange(Quadrat, Year) %>% 
+  left_join(flora_pooled %>% 
+              filter(Cover_roll>0) %>% 
+              group_by(Quadrat) %>% 
+              distinct(Species_resolved, .keep_all=T) %>% 
+              summarize(SR_acc=n()), 
+            by="Quadrat") %>% 
+  left_join(flora %>% 
+              distinct(Quadrat, Series, Treatment), 
+            by="Quadrat") %>% 
+  mutate(Beta_year=(1-SR/SR_acc))
+
+
+
 ggplot(data=flora_eff, 
        aes(x=Year, y=Beta_year, col=Treatment)) + 
   geom_point()  + 
@@ -220,7 +268,6 @@ ggplot(data=flora_eff) +
 ### Specaccum by site ####
 ## After how many years am I confident I sampled most of the species?
 
-plot_index <- sapply(rownames(flora_wide), function(x){strsplit(x, split = "_")[[1]][[1]]})
 
 specaccum_df0 <- NULL
 for(i in unique(plot_index)){
@@ -301,10 +348,11 @@ write_csv(floraSR, file = "../intermediate_steps/floraSR.csv")
 
 library(nlme)
 #library(effects)
+# Set contrasts for year variable (adjust according to your data)
 
 mod1 <- lme(DeltaSR ~ Treatment * LogDeltaYear, data=floraSR, random=~1|Quadrat)
 summary(mod1)
-mod2 <- lme(DeltaSR ~ Treatment * LogDeltaYear +0, data=floraSR, 
+mod2 <- lme(DeltaSR ~ Treatment * LogDeltaYear + 0, data=floraSR, 
             random=(~1|Quadrat), 
             correlation = corAR1(form = ~1 | Quadrat))
 summary(mod2)
@@ -367,8 +415,21 @@ newdat <- expand.grid(Treatment=unique(floraSR$Treatment),
                                     length.out=101))
 
 #predict response
-
 newdat$pred <- predict(mod2, newdata=newdat,level=0)
+
+## code to predict response at round intervals
+
+#newdat <- expand.grid(Treatment=unique(floraSR$Treatment),
+#                      LogDeltaYear=log(0:11+1))
+#newdat$pred <- predict(mod2, newdata=newdat,level=0)
+#newdat %>% 
+#  mutate(DeltaYear=exp(LogDeltaYear)-1) %>% 
+#  arrange(Treatment, LogDeltaYear) %>% 
+#  group_by(Treatment) %>% 
+#  mutate(diff = pred - lag(pred, n=1L))
+
+
+
 #create design matrix
 Designmat <- model.matrix(eval(eval(mod2$call$fixed)[-2]), newdat[-ncol(newdat)])
 
@@ -425,6 +486,20 @@ plot(mod_cov2, DeltaCov ~ fitted(.) | Quadrat, abline = c(0,1))
 
 newdat2 <- newdat
 newdat2$pred <- predict(mod_cov2, newdata=newdat2,level=0)
+
+## code to predict response at round intervals
+
+newdat <- expand.grid(Treatment=unique(floraSR$Treatment),
+                      LogDeltaYear=log(0:11+1))
+newdat$pred <- predict(mod_cov2, newdata=newdat,level=0)
+newdat %>% 
+  mutate(DeltaYear=exp(LogDeltaYear)-1) %>% 
+  arrange(Treatment, LogDeltaYear) %>% 
+  group_by(Treatment) %>% 
+  mutate(diff = pred - lag(pred, n=1L))
+
+
+
 #create design matrix
 Designmat <- model.matrix(eval(eval(mod_cov2$call$fixed)[-2]), newdat[-ncol(newdat2)])
 
@@ -453,23 +528,22 @@ ggsave(filename="../figure_tables/Figure3_SR_lme.png", width=8, height=4, units 
 
 
 ### NMDS   ####
-
-# Convert species x plot level to wide format
-flora_wide <- flora %>% 
-  filter(Layer=="U") %>% 
-  ## flatten vegetation layers
-  group_by(Quadrat, Species_resolved, Year) %>% 
-  summarize(Cover=combine.cover(Cover)) %>% 
-  pivot_wider(names_from=Species_resolved, values_from = "Cover", values_fill = 0) %>% 
-  unite("Quadrat_year", Quadrat, Year) %>% 
-  arrange(Quadrat_year) %>% 
-  column_to_rownames("Quadrat_year")
-
 # Compute dissimilarity matrix
-flora_dist <- vegan::vegdist((flora_wide), method="bray")
+flora_dist <- vegan::vegdist((flora_wide), method="hellinger")
 
 # Compute NMDS
-flora_mds <- vegan::metaMDS(flora_dist, k=2, )
+set.seed(1000)
+flora_mds <- vegan::metaMDS(flora_dist, k=2, try = 100, trymax=100)
+
+# Passively project species
+flora_envfit0 <- envfit(flora_mds, flora_wide)
+flora_envfit <- data.frame(flora_envfit0$vectors$arrows) %>%  
+  bind_cols(data.frame(r2=flora_envfit0$vectors$r, p=flora_envfit0$vectors$pvals)) %>% 
+  rownames_to_column("Species") %>% 
+  filter(p<0.05) %>% 
+  filter(r2>0.25) %>% 
+  arrange(desc(r2))
+
 
 # Graph of NMDS
 # Convert data to data.frame and add ancillary values
@@ -483,10 +557,23 @@ flora_mds_scores <- flora_mds$points %>%
             by="Quadrat") %>% 
   arrange(Quadrat, Year)
 
-ggplot(data=flora_mds_scores) +
+ggplot(data=flora_mds_scores, aes(x=MDS1, y=MDS2)) +
 #  geom_point(aes(x=MDS1, y=MDS2, col=Quadrat)) + 
-  geom_path(aes(x=MDS1, y=MDS2, group=Quadrat, col=Treatment, linetype=Series), arrow=arrow(angle = 15, length = unit(0.15, "inches"))) + 
-  theme_bw()
+  geom_path(aes(group=Quadrat, col=Treatment, linetype=Series), arrow=arrow(angle = 15, length = unit(0.15, "inches"))) + 
+  scale_color_brewer(palette = "Dark2", direction = -1) + 
+  geom_text(label=flora_mds_scores$Year, size=3, hjust=-0.2, show.legend=F,
+            col= "black",
+            check_overlap = F, 
+            alpha=rep(c(1,0,0,1,0,0,1,0,0,0,1)/3, length.out=nrow(flora_mds_scores)), 
+            fontface="bold") + 
+  geom_point(data=flora_envfit, 
+                  aes(x=NMDS1, y=NMDS2), pch=17) + 
+  geom_text_repel(data=flora_envfit, 
+             aes(x=NMDS1, y=NMDS2, label=Species), max.overlaps = 12) + 
+  theme_bw() + 
+  theme(panel.grid = element_blank())
+
+
 
 
 
@@ -632,8 +719,33 @@ mydata <- data.frame(qyear=names(flora_dist)) %>%
   left_join(flora %>% 
               distinct(Quadrat, Treatment), 
             by="Quadrat")
-adonis2(formula= flora_dist ~ Treatment*Year + Quadrat, data=mydata, strata=mydata$Quadrat)
+SS.deco <- adonis2(formula= flora_dist ~ Treatment*Year + Quadrat, data=mydata, strata=mydata$Quadrat)
 
+## Calculate LCBD
+aa <- adespatial::beta.div(Y=flora_wide, method = "hellinger")
+
+bb <- data.frame(
+  Quadrat_year=names(aa$LCBD), 
+  LCBD=aa$LCBD,
+  p.LCBD=aa$p.LCBD) %>% 
+  as_tibble() %>% 
+  separate("Quadrat_year", into=c("Quadrat", "Year"), sep="_") %>% 
+  mutate(Treatment=str_extract(Quadrat, pattern="G|20|40")) %>% 
+  mutate(Treatment=fct_recode(factor(Treatment, 
+                                     levels=c("G", "20", "40")), 
+                              "Gap"="G", 
+                              "Margin"="20", 
+                              "Interior"="40")) %>% 
+  arrange(Treatment)
+
+ggplot(data=bb, 
+       aes(x=Year, y=Quadrat, size=LCBD, col=p.LCBD>0.05)) + 
+  geom_point()
+
+
+ggplot(data=bb, 
+       aes(x=Quadrat, y=LCBD, fill=Year, )) + 
+  geom_bar(stat="identity")
 
 
 
@@ -694,29 +806,16 @@ flora_beta2 <- flora_betapart$beta.sne %>%
 #  theme_bw() + 
 #  facet_grid(beta_component~.)
 
-ggplot(data=flora_beta2 %>% 
-         filter(Year1== Year2-1) %>% 
-         pivot_longer(beta_sne:beta_sor, names_to="beta_component", values_to="beta")) + 
-  geom_boxplot(aes(y=beta, group=Treatment, col=Treatment)) + 
-  theme_bw() + 
-  facet_grid(beta_component~.)
-
-ggplot(data=flora_beta2 %>% 
-         filter(Year1== Year2-1),# %>% 
-         #mutate(Prop_turnover=beta_sim/beta_sor*100) %>% 
-         #pivot_longer(Prop_turnover, names_to="beta_component", values_to="beta"
-  aes(x=Year2, y=beta_sor, col=Treatment, fill=Treatment)) + 
-  geom_point() + 
-  geom_smooth(alpha=0.2, method="lm") + 
-  theme_bw() + 
-  #facet_grid(beta_component~.) + 
-  scale_x_continuous(breaks = seq(2012, 2022, by=2)) + 
-  scale_color_brewer(palette = "Dark2", direction = -1) + 
-  scale_fill_brewer(palette = "Dark2", direction = -1)
+# ggplot(data=flora_beta2 %>% 
+#          filter(Year1== Year2-1) %>% 
+#          pivot_longer(beta_sne:beta_sor, names_to="beta_component", values_to="beta")) + 
+#   geom_boxplot(aes(y=beta, group=Treatment, col=Treatment)) + 
+#   theme_bw() + 
+#   facet_grid(beta_component~.)
 
 
 ## Partitioning change between nestedness and turnover betwene t and t0
-ggplot(data=flora_beta2 %>% 
+ll <- ggplot(data=flora_beta2 %>% 
          filter(Year1==2012) %>%
          pivot_longer(beta_sne:beta_sor, 
                       names_to="beta_component", values_to="Beta Diversity") %>% 
@@ -724,19 +823,40 @@ ggplot(data=flora_beta2 %>%
                                       levels=c("beta_sim", "beta_sne", "beta_sor"), 
                                       labels=c("Turnover", "Nestedness", "Total"))) %>% 
          mutate(beta_component=fct_rev(beta_component)) %>% 
+        filter(beta_component=="Total") %>% 
          dplyr::rename(Year=Year2) %>% 
          left_join(flora %>% 
                      distinct(Quadrat, Treatment, Series), 
                    by=c("Quadrat", "Treatment")), 
        aes(y=`Beta Diversity`, x=Year, col=Treatment, fill=Treatment)) + 
   geom_point() + 
-  geom_smooth(method="lm", se=T, alpha=0.2) +
+  #geom_smooth(method="lm", se=T, alpha=0.2) +
+  geom_smooth() + 
   theme_bw() + 
-  facet_grid(beta_component~.) + 
+  facet_grid(Treatment ~.) + 
   #scale_color_discrete(name="Beta Diversity\nComponent") + 
   scale_x_continuous(breaks = seq(2012, 2022, by=2)) + 
   scale_color_brewer(palette = "Dark2", direction = -1) + 
   scale_fill_brewer(palette = "Dark2", direction = -1)
+
+rr <- ggplot(data=flora_beta2 %>% 
+               filter(Year1== Year2-1),# %>% 
+             #mutate(Prop_turnover=beta_sim/beta_sor*100) %>% 
+             #pivot_longer(Prop_turnover, names_to="beta_component", values_to="beta"
+             aes(x=Year2, y=beta_sor, col=Treatment, fill=Treatment)) + 
+  geom_point() + 
+  #geom_smooth(alpha=0.2, method="lm") + 
+  geom_smooth(alpha=0.2) +
+  theme_bw() + 
+  facet_grid(Treatment~.) + 
+  scale_x_continuous(breaks = seq(2012, 2022, by=2)) + 
+  scale_color_brewer(palette = "Dark2", direction = -1) + 
+  scale_fill_brewer(palette = "Dark2", direction = -1)
+
+
+
+ll +theme(legend.position="null") | rr
+
 
 
 ##Plot temporal decay
@@ -751,4 +871,219 @@ ggplot(data=flora_beta2 %>%
   theme_bw() + 
   facet_grid(Treatment~beta_component) + 
   scale_x_continuous(breaks = seq(1,10, by=2))
+
+
+
+#### Life-history traits ####
+elle <- read_csv("../rawdata/Ellenberg_Pignatti_out.csv")
+checklist_elle <- checklist %>% 
+  mutate(pignatti_match=species_resolved) %>% 
+  mutate(pignatti_match=factor(pignatti_match)) %>% 
+  mutate(pignatti_match=fct_recode(pignatti_match,
+                                   `Festuca drymeia`="Festuca drymeja",
+                                     `Hieracium sylvaticum`="Hieracium murorum", 
+                                     `Mycelis muralis`="Lactuca muralis", 
+                                     `Lamiastrum galeobdolon`="Lamium galeobdolon", 
+                                     `Pulmonaria officinalis`="Pulmonaria apennina",
+                                     `Rubus hirtus`="Rubus proiectus")) %>% 
+  left_join(elle, by=c("pignatti_match"="Species")) %>% 
+  mutate(GF=replace(GF, 
+                    list=species_resolved %in% c("Hieracium murorum", "Trifolium pratense", "Fragaria vesca", "Veronica montana", "Veronica officinalis"), 
+                    values="H")) %>% 
+  mutate(LF=replace(LF, 
+                    list=species_resolved %in% c("Hieracium murorum", "Trifolium pratense"), 
+                    values="Scap"))  %>% 
+  mutate(LF=replace(LF, 
+                  list=species_resolved %in% c("Veronica montana", "Veronica officinalis"),
+                  values="Rept")) %>% 
+  dplyr::select(-c(1:5, 7)) %>% 
+  rename(Species_resolved=species_resolved) %>% 
+  distinct() %>% 
+  mutate(Spring_ephemeral=F) %>% 
+  mutate(Spring_ephemeral=replace(Spring_ephemeral, 
+                                  list=Species_resolved %in% c("Adoxa moschatellina", "Corydalis cava", 
+                                                               "Anemone apennina", "Cardamine bulbifera", 
+                                                               "Anemome ranunculoides", "Cardamine enneaphyllos"), 
+                                  values=TRUE))
+
+### Decompose the SS of the species x plot matrix after excluding therophytes and spring ephemerals
+
+## SS of the total matrix
+plot_index <- sapply(rownames(flora_wide), function(x){strsplit(x, split = "_")[[1]][[1]]})
+flora_dist <- vegan::vegdist(flora_wide, method="hellinger")
+mydata <- data.frame(qyear=names(flora_dist)) %>% 
+  separate(qyear, into=c("Quadrat", "Year"), sep="_") %>% 
+  left_join(flora %>% 
+              distinct(Quadrat, Treatment), 
+            by="Quadrat")
+SS.deco <- adonis2(formula= flora_dist ~ Treatment*Year + Quadrat, data=mydata, strata=mydata$Quadrat)
+
+
+# exclude terophytes and spring ephemerals
+flora_dist <- vegan::vegdist(flora_wide[,which(colnames(flora_wide) %in% 
+                                                 (checklist_elle %>% 
+                                                    filter(Spring_ephemeral==F & GF!="T") %>% 
+                                                    pull(Species_resolved)))], 
+                             method="hellinger")
+mydata <- data.frame(qyear=names(flora_dist)) %>% 
+  separate(qyear, into=c("Quadrat", "Year"), sep="_") %>% 
+  left_join(flora %>% 
+              distinct(Quadrat, Treatment), 
+            by="Quadrat")
+SS.deco2 <- adonis2(formula= flora_dist ~ Treatment*Year + Quadrat, data=mydata, strata=mydata$Quadrat)
+
+#exclude all species never having more than 0.5 cover
+flora_dist <- vegan::vegdist(flora_wide[,apply(flora_wide, "max", MARGIN=2)>0.5], 
+                             method="hellinger")
+mydata <- data.frame(qyear=names(flora_dist)) %>% 
+  separate(qyear, into=c("Quadrat", "Year"), sep="_") %>% 
+  left_join(flora %>% 
+              distinct(Quadrat, Treatment), 
+            by="Quadrat")
+SS.deco3 <- adonis2(formula= flora_dist ~ Treatment*Year + Quadrat, data=mydata, strata=mydata$Quadrat)
+
+## pool species across consecutive years to reduce omission error
+##########à pool species cover across n consecutive years
+flora_wide_pooled <- flora_pooled %>% 
+  pivot_wider(names_from=Species_resolved, values_from = "Cover_roll", values_fill = 0) %>% 
+  unite("Quadrat_year", Quadrat, Year) %>% 
+  arrange(Quadrat_year) %>% 
+  #View()
+  column_to_rownames("Quadrat_year")
+
+flora_dist <- vegan::vegdist(flora_wide_pooled, method="hellinger")
+
+mydata <- data.frame(qyear=names(flora_dist)) %>% 
+  separate(qyear, into=c("Quadrat", "Year"), sep="_") %>% 
+  left_join(flora %>% 
+              distinct(Quadrat, Treatment), 
+            by="Quadrat")
+SS.deco4 <- adonis2(formula= flora_dist ~ Treatment*Year + Quadrat, data=mydata, strata=mydata$Quadrat)
+
+
+data.frame(
+  Fraction=rownames(SS.deco0),
+  Share_raw=SS.deco$SumOfSqs,
+  Share_pooled=SS.deco4$SumOfSqs)  %>% 
+  bind_cols({.} %>% 
+              summarize_at(.vars = vars(Share_raw:Share_pooled),
+                           .funs = list("sum"=~sum(.)/2))
+  ) %>% 
+  mutate(Share_raw_perc=round(Share_raw/Share_raw_sum*100,2),
+         Share_pooled_perc=round(Share_pooled/Share_pooled_sum*100,2))
+
+
+
+
+
+
+### True Diversity approach - to account for undersampling
+Qjac <- function(x, q){
+  source("D:/Nextcloud/MyFunctions/div.dec.R")
+    x <- flora_wide
+  nr <- nrow(x) #plots
+  nc <- ncol(x) #species
+  distij <- matrix(NA, nrow=nr, ncol=nr, dimnames = list(rownames(flora_wide), rownames(flora_wide)))
+  diag(distij) <- 0
+  
+  for(i in 1:(nr-1)){
+    for(j in (i+1):nr){
+      xij <- flora_wide[c(i,j),]
+      distij[i,j] <- distij[j,i] <- 1-((2/div.dec(xij, q=q, w="even")[[2]])-1)
+    }
+  }
+  return(as.dist(distij))
+}
+
+dist0 <- Qjac(flora_wide, q=0)
+dist2 <- Qjac(flora_wide, q=2)
+
+
+
+flora_betaq <- dist0 %>% 
+  as.matrix() %>% 
+  as.data.frame() %>% 
+  rownames_to_column("Quadrat_year") %>% 
+  pivot_longer(-Quadrat_year, names_to = "Quadrat_year2", values_to="beta0") %>% 
+  left_join(dist2 %>% 
+              as.matrix() %>% 
+              as.data.frame() %>% 
+              rownames_to_column("Quadrat_year") %>% 
+              pivot_longer(-Quadrat_year, names_to = "Quadrat_year2", values_to="beta2"), 
+            by=c("Quadrat_year", "Quadrat_year2")) %>% 
+  separate(Quadrat_year, into=c("Quadrat1", "Year1")) %>% 
+  separate(Quadrat_year2, into=c("Quadrat2", "Year2")) %>% 
+  filter(Quadrat1==Quadrat2) %>% 
+  select(-Quadrat2, Quadrat=Quadrat1) %>% 
+  mutate_at(.vars=vars(starts_with("Year")), 
+            .funs = list(~as.numeric(.))) %>% 
+  #filter(Year1== Year2-1) %>% 
+  mutate(Treatment=str_extract(Quadrat, pattern="G|20|40")) %>% 
+  mutate(Treatment=fct_recode(factor(Treatment, 
+                                     levels=c("G", "20", "40")), 
+                              "Gap"="G", 
+                              "Margin"="20", 
+                              "Interior"="40")) %>% 
+  pivot_longer(cols=beta0:beta2, names_to="q", values_to="beta")
+
+
+### beta diversity between t and t0
+(ll <- ggplot(data=flora_betaq %>% 
+                filter(Year1==2012) %>%
+                dplyr::rename(Year=Year2),  
+              aes(y=beta, x=Year, col=Treatment, fill=Treatment)) + 
+    geom_point() + 
+    #geom_smooth(method="lm", se=T, alpha=0.2) +
+    geom_smooth() + 
+    theme_bw() + 
+    facet_grid(q~.) + 
+    #scale_color_discrete(name="Beta Diversity\nComponent") + 
+    scale_x_continuous(breaks = seq(2012, 2022, by=2)) + 
+    scale_color_brewer(palette = "Dark2", direction = -1) + 
+    scale_fill_brewer(palette = "Dark2", direction = -1)
+)
+
+
+### Showing beta diversity between t and t-1
+(rr <- ggplot(data=flora_betaq %>% 
+               filter(Year1== Year2-1),# %>% 
+             aes(x=Year2, y=beta, col=Treatment, fill=Treatment)) + 
+  geom_point() + 
+  #geom_smooth(alpha=0.2, method="lm") + 
+  geom_smooth(alpha=0.2) +
+  theme_bw() + 
+  facet_grid(q~.) + 
+  scale_x_continuous(name="Year", breaks = seq(2012, 2022, by=2)) + 
+  scale_color_brewer(palette = "Dark2", direction = -1) + 
+  scale_fill_brewer(palette = "Dark2", direction = -1)
+)
+
+
+ll + theme(legend.position="none") | rr
+
+mydata <- data.frame(qyear=names(dist0)) %>% 
+  separate(qyear, into=c("Quadrat", "Year"), sep="_") %>% 
+  left_join(flora %>% 
+              distinct(Quadrat, Treatment), 
+            by="Quadrat")
+SS.deco0 <- adonis2(formula= dist0 ~ Treatment*Year + Quadrat, data=mydata, strata=mydata$Quadrat)
+SS.deco2 <- adonis2(formula= dist2 ~ Treatment*Year + Quadrat, data=mydata, strata=mydata$Quadrat)
+adonis2(formula= vegdist(flora_wide, method="jaccard") ~ Treatment*Year + Quadrat, data=mydata, strata=mydata$Quadrat)
+
+
+data.frame(
+  Fraction=rownames(SS.deco0),
+  Share0=SS.deco0$SumOfSqs,
+  Share2=SS.deco2$SumOfSqs)  %>% 
+  bind_cols({.} %>% 
+              summarize_at(.vars = vars(Share0:Share2),
+                           .funs = list("sum"=~sum(.)/2))
+  ) %>% 
+  mutate(Share0_perc=round(Share0/Share0_sum*100,2),
+         Share2_perc=round(Share2/Share2_sum*100,2))
+
+
+  
+
+
 

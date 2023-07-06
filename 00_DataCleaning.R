@@ -6,8 +6,9 @@ library(zoo)
 ## Import, format and correct data
 flora0 <- readr::read_delim("../rawdata/inserimento_flora.csv", delim=";", ) %>% 
   select(-Plot) %>% 
-  mutate(Date=lubridate::as_date(Year, format=c("%d/%m/%y") )) %>% 
-  mutate(Year=lubridate::year(Date)) %>% 
+  #mutate(Date=lubridate::as_date("Year", format=c("%d/%m/%y"))) %>% 
+  mutate(Year=strptime(Year, format("%d/%m/%Y"))) %>% 
+  mutate(Year=lubridate::year(Year)) %>% # PROBLEMA ----------------------------------------
   relocate(Quadrat, .before=Year) %>% 
   mutate(Type=factor(Type)) %>% 
   rename(Layer=Type, Species_original = Species) %>% 
@@ -20,12 +21,6 @@ flora0 <- readr::read_delim("../rawdata/inserimento_flora.csv", delim=";", ) %>%
   mutate(Series=str_extract(Quadrat, "W|E|N|S")) %>% 
   mutate(Series=fct_collapse(factor(Series), 
                              "E"=c("W", "E"))) %>% 
-  ## Correct some typos in raw data
-  
-  #Add missing row for year 2022 ---------------------------------------------------------------------------------------
-  bind_rows({.} %>% 
-              dplyr::filter(Year==2021, Quadrat=="N40",Layer=="O", Species_original=="Fagus sylvatica") %>% 
-              mutate(Year=2022)) %>% 
   
   ## Assign most likely species name when unsure, based on species observed in that plot over the years
   ## NOT TO CHANGE ON ACCESS DB
@@ -53,7 +48,7 @@ flora0 <- readr::read_delim("../rawdata/inserimento_flora.csv", delim=";", ) %>%
                                       pattern="Vicia sepium|Lathyrus$", 
                                       replacement="Lathyrus pratensis")) %>% 
   mutate(Species_original=str_replace(Species_original, 
-                                      pattern="Silene italica italica", 
+                                      pattern="Silene italica italica|Silene$", 
                                       replacement="Silene italica")) %>%
   mutate(Species_original=str_replace(Species_original, 
                                       pattern="Plantula foglie opposte dentate", 
@@ -65,8 +60,8 @@ flora0 <- readr::read_delim("../rawdata/inserimento_flora.csv", delim=";", ) %>%
                                       pattern="Acer$", 
                                       replacement="Acer pseudoplatanus")) %>% 
   mutate(Species_original=str_replace(Species_original, 
-                                      pattern="Senecio murorum|Senecio vulgaris", 
-                                      replacement="Senecio rupestris")) %>% 
+                                      pattern="Senecio rupestris|Senecio vulgaris", 
+                                      replacement="Senecio vulgaris")) %>% 
   mutate(Species_original=str_replace(Species_original, 
                                       pattern="Potentilla|Potentilla micrantha", 
                                       replacement="Fragaria vesca")) %>% 
@@ -84,8 +79,14 @@ flora0 <- readr::read_delim("../rawdata/inserimento_flora.csv", delim=";", ) %>%
                                       replacement="Epipactis microphylla")) %>% 
   mutate(Species_original=replace(Species_original, 
                                   list=Quadrat=="E40" & Species_original=="Cephalanthera rubra", 
-                                  values="Epipactis microphylla"))
-
+                                  values="Epipactis microphylla")) %>% 
+  mutate(Species_original=str_replace(Species_original, 
+                                      pattern="Senecio gr. Murorum", 
+                                      replacement="Hieracium murorum")) %>% 
+  mutate(Species_original=str_replace(Species_original, 
+                                      pattern="Corydalis cava cava|Anemone apennina apennina", 
+                                      replacement="Adoxa moschatellina")) 
+  
 
 ### Standardizzazione tassonomica
 
@@ -95,16 +96,17 @@ checklist0 <- flora0 %>%
   pull(Species_original)
 
 
-#tpl_output <- TPL(checklist0)
-#save(tpl_output, file="../intermediate_steps/tpl_output.RData")
+tpl_output <- TPL(checklist0)
+save(tpl_output, file="../intermediate_steps/tpl_output.RData")
 
 load(file="../intermediate_steps/tpl_output.RData")
 
 checklist <- data.frame(
-  species_original=tpl_output$Taxon,
-  new_genus=tpl_output$New.Genus, 
-  new_species=tpl_output$New.Species, 
-  taxonomic_status_2023=tpl_output$New.Taxonomic.status) %>% 
+    species_original=tpl_output$Taxon,
+    new_genus=tpl_output$New.Genus, 
+    new_species=tpl_output$New.Species, 
+    taxonomic_status_2023=tpl_output$New.Taxonomic.status, 
+    family=tpl_output$Family) %>% 
   mutate(species_resolved=species_original) %>% 
   mutate(new_species=replace_na(new_species, "sp.")) %>% 
   mutate(species_tmp=paste(new_genus, new_species)) %>% 

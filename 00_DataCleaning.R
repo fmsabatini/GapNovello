@@ -6,7 +6,7 @@ library(zoo)
 # 
 
 ## Import, format and correct data
-flora0 <- readr::read_delim("../rawdata/inserimento_flora.csv", delim=";", ) %>% 
+flora0 <- readr::read_delim("../rawdata/inserimento_flora_2023.csv", delim=";", ) %>% 
   select(-Plot) %>% 
   #mutate(Date=lubridate::as_date("Year", format=c("%d/%m/%y"))) %>% 
   mutate(Year=strptime(Year, format("%d/%m/%Y"))) %>% 
@@ -98,8 +98,8 @@ checklist0 <- flora0 %>%
   pull(Species_original)
 
 
-tpl_output <- TPL(checklist0)
-save(tpl_output, file="../intermediate_steps/tpl_output.RData")
+#tpl_output <- TPL(checklist0)
+#save(tpl_output, file="../intermediate_steps/tpl_output.RData")
 
 load(file="../intermediate_steps/tpl_output.RData")
 
@@ -126,7 +126,7 @@ flora <- flora0 %>%
 
 
 ### Import plot-level data
-header0 <- read_delim("../rawdata/inserimento_stazionali.csv", delim=";") %>% 
+header0 <- read_delim("../rawdata/inserimento_stazionali_2023.csv", delim=";") %>% 
   select(-Plot, Date=Day) %>% 
   mutate(Date=lubridate::as_date(Date, format=c("%d/%m/%y") )) %>% 
   mutate(Year=lubridate::year(Date)) %>% 

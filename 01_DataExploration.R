@@ -3,6 +3,7 @@ library(betapart)
 library(patchwork)
 library(wesanderson)
 library(vegan)
+library(ggrepel)
 
 ### Ancillary functions ####
 ## Calculate rolling mean of change
@@ -53,7 +54,7 @@ flora_pooled <- flora %>%
 ### General Description ####
 ### Graph of species abundances with time (by plot)
 ggplot(data=flora_pooled %>% 
-         filter(Layer=="U") %>% 
+         #filter(Layer=="U") %>% 
          filter(Quadrat=="GN") %>% 
          mutate(Species_resolved=factor(Species_resolved)) %>% 
          left_join({.} %>% 
@@ -61,7 +62,7 @@ ggplot(data=flora_pooled %>%
                    by=c("Species_resolved")) %>% 
          group_by(Species_resolved, Year) %>% 
          filter(n>2) %>% 
-         summarize(Summed_cover=sum(Cover))) + 
+         summarize(Summed_cover=sum(Cover_roll))) + 
   geom_line(aes(x=Year, y=Summed_cover)) + #, group=Species_resolved, col=Species_resolved)) +
   #scale_color_brewer(type="div")
   ggplot2::facet_wrap(~Species_resolved, ncol=5) + 
@@ -346,6 +347,8 @@ write_csv(floraSR, file = "../intermediate_steps/floraSR.csv")
 
 
 
+
+
 library(nlme)
 #library(effects)
 # Set contrasts for year variable (adjust according to your data)
@@ -490,7 +493,7 @@ newdat2$pred <- predict(mod_cov2, newdata=newdat2,level=0)
 ## code to predict response at round intervals
 
 newdat <- expand.grid(Treatment=unique(floraSR$Treatment),
-                      LogDeltaYear=log(0:11+1))
+                      LogDeltaYear=log(0:12+1))
 newdat$pred <- predict(mod_cov2, newdata=newdat,level=0)
 newdat %>% 
   mutate(DeltaYear=exp(LogDeltaYear)-1) %>% 
@@ -523,7 +526,24 @@ ggsave(filename="../figure_tables/Figure3_SR_lme.png", width=8, height=4, units 
 
 
 
+###
+library(lme4)
+mod1b <- lmer(DeltaSR ~ Treatment * LogDeltaYear + (1|Quadrat), data=floraSR)
+partR2(mod1b, 
+       partvars = c("Treatment", 
+                    "LogDeltaYear", 
+                    "Treatment:LogDeltaYear"), 
+       R2_type="marginal")
 
+
+##variation decomposition to account for interactions as suggested in Stoffel, Fig 2 C
+mod1c <- lmer(DeltaSR ~Treatment * LogDeltaYear + (1|Quadrat), data=floraSR)
+part1 <- partR2(mod1c, partvars = c("Treatment:LogDeltaYear"), nboot=100)
+mod2c <- lmer(DeltaSR ~Treatment + LogDeltaYear + (1|Quadrat), data=floraSR)
+part2 <- partR2(mod2c, partvars = c("Treatment", "LogDeltaYear"), nboot=100)
+bb <- mergeR2(part1, part2)
+forestplot(bb)
+forestplot(bb, "IR2")
 
 
 
@@ -568,8 +588,8 @@ ggplot(data=flora_mds_scores, aes(x=MDS1, y=MDS2)) +
             fontface="bold") + 
   geom_point(data=flora_envfit, 
                   aes(x=NMDS1, y=NMDS2), pch=17) + 
-  geom_text_repel(data=flora_envfit, 
-             aes(x=NMDS1, y=NMDS2, label=Species), max.overlaps = 12) + 
+#  geom_text_repel(data=flora_envfit, 
+#             aes(x=NMDS1, y=NMDS2, label=Species), max.overlaps = 12) + 
   theme_bw() + 
   theme(panel.grid = element_blank())
 
@@ -916,7 +936,7 @@ mydata <- data.frame(qyear=names(flora_dist)) %>%
   left_join(flora %>% 
               distinct(Quadrat, Treatment), 
             by="Quadrat")
-SS.deco <- adonis2(formula= flora_dist ~ Treatment*Year + Quadrat, data=mydata, strata=mydata$Quadrat)
+SS.deco0 <- adonis2(formula= flora_dist ~ Treatment*Year + Quadrat, data=mydata, strata=mydata$Quadrat)
 
 
 # exclude terophytes and spring ephemerals
@@ -960,21 +980,80 @@ mydata <- data.frame(qyear=names(flora_dist)) %>%
             by="Quadrat")
 SS.deco4 <- adonis2(formula= flora_dist ~ Treatment*Year + Quadrat, data=mydata, strata=mydata$Quadrat)
 
+### decompose variation only for NON gap plots
+toexclude <- which(mydata$Treatment == "Gap")
+mydata_nongap <- mydata %>% 
+  filter(Treatment != "Gap")
 
-data.frame(
+SS.deco_nongap <- adonis2(formula= as.dist(as.matrix(flora_dist)[-toexclude, -toexclude]) ~
+                            Treatment*Year + Quadrat, data=mydata_nongap, 
+                          strata=mydata_nongap$Quadrat)
+
+
+parted <- data.frame(
   Fraction=rownames(SS.deco0),
   Share_raw=SS.deco$SumOfSqs,
-  Share_pooled=SS.deco4$SumOfSqs)  %>% 
+  Share_pooled=SS.deco4$SumOfSqs, 
+  Share_nongap=SS.deco_nongap$SumOfSqs)  %>% 
   bind_cols({.} %>% 
-              summarize_at(.vars = vars(Share_raw:Share_pooled),
+              summarize_at(.vars = vars(Share_raw:Share_nongap),
                            .funs = list("sum"=~sum(.)/2))
   ) %>% 
   mutate(Share_raw_perc=round(Share_raw/Share_raw_sum*100,2),
-         Share_pooled_perc=round(Share_pooled/Share_pooled_sum*100,2))
+         Share_pooled_perc=round(Share_pooled/Share_pooled_sum*100,2), 
+         Share_nongap_perc=round(Share_nongap/Share_nongap_sum*100,2)) 
+
+
+parted_long <- parted %>% 
+  dplyr::select(-ends_with("_sum")) %>% 
+  pivot_longer(-Fraction, names_to="Variable", values_to="Explained Variation (%)") %>% 
+  mutate(Variable=str_remove(Variable, pattern="^Share_")) %>% 
+  separate(Variable, into=c("model", "Abs_Perc")) %>% 
+  mutate(Abs_Perc=replace_na(Abs_Perc, "abs")) %>% 
+  mutate(Fraction=factor(Fraction, 
+                         levels=c("Treatment", 
+                                  "Treatment:Year", 
+                                  "Year", 
+                                  "Quadrat", 
+                                  "Residual", 
+                                  "Total"))) %>% 
+  mutate(model=factor(model, levels=c("pooled", "nongap", "raw"))) %>% 
+  arrange(Fraction)
+
+ggplot(data=parted_long %>% 
+         filter(Abs_Perc=="perc") %>% 
+         filter(Fraction!="Total") %>% 
+         filter(model=="raw")) +
+  geom_col(aes(x=model, y=`Explained Variation (%)`, fill=Fraction, group=model), width=0.5) +
+  theme_minimal() + 
+  scale_fill_brewer(palette = "Dark2") + 
+  #guides(fill = guide_legend(reverse=TRUE)) + 
+  scale_x_discrete(name=NULL) + 
+  coord_flip() + 
+  theme(legend.position = "bottom", 
+        legend.title = element_blank(), 
+        axis.text.y = element_blank())
+
+ggsave(last_plot(), file="../figure_tables/ExplainedVariation_rawonly.png", 
+       width = 8, height=2, units="in",dpi = 300, bg="white")
 
 
 
+ggplot(data=parted_long %>% 
+         filter(Abs_Perc=="perc") %>% 
+         filter(Fraction!="Total") %>% 
+         filter(model!="nongap")) +
+  geom_col(aes(x=model, y=`Explained Variation (%)`, fill=Fraction, group=model), width=0.5) +
+  theme_minimal() + 
+  scale_fill_brewer(palette = "Dark2") + 
+  #guides(fill = guide_legend(reverse=TRUE)) + 
+  scale_x_discrete(name=NULL) + 
+  coord_flip() + 
+  theme(legend.position = "bottom", 
+        legend.title = element_blank())
 
+ggsave(last_plot(), file="../figure_tables/ExplainedVariation.png", 
+       width = 8, height=2, units="in",dpi = 300)
 
 
 ### True Diversity approach - to account for undersampling
@@ -1038,7 +1117,7 @@ flora_betaq <- dist0 %>%
     theme_bw() + 
     facet_grid(q~.) + 
     #scale_color_discrete(name="Beta Diversity\nComponent") + 
-    scale_x_continuous(breaks = seq(2012, 2022, by=2)) + 
+    scale_x_continuous(breaks = seq(2012, 2023, by=2)) + 
     scale_color_brewer(palette = "Dark2", direction = -1) + 
     scale_fill_brewer(palette = "Dark2", direction = -1)
 )
@@ -1050,10 +1129,10 @@ flora_betaq <- dist0 %>%
              aes(x=Year2, y=beta, col=Treatment, fill=Treatment)) + 
   geom_point() + 
   #geom_smooth(alpha=0.2, method="lm") + 
-  geom_smooth(alpha=0.2) +
+  geom_smooth(alpha=0.2, method="lm") +
   theme_bw() + 
   facet_grid(q~.) + 
-  scale_x_continuous(name="Year", breaks = seq(2012, 2022, by=2)) + 
+  scale_x_continuous(name="Year", breaks = seq(2012, 2023, by=2)) + 
   scale_color_brewer(palette = "Dark2", direction = -1) + 
   scale_fill_brewer(palette = "Dark2", direction = -1)
 )
@@ -1071,7 +1150,7 @@ SS.deco2 <- adonis2(formula= dist2 ~ Treatment*Year + Quadrat, data=mydata, stra
 adonis2(formula= vegdist(flora_wide, method="jaccard") ~ Treatment*Year + Quadrat, data=mydata, strata=mydata$Quadrat)
 
 
-data.frame(
+parted_q <- data.frame(
   Fraction=rownames(SS.deco0),
   Share0=SS.deco0$SumOfSqs,
   Share2=SS.deco2$SumOfSqs)  %>% 
@@ -1084,6 +1163,34 @@ data.frame(
 
 
   
+parted_long_q <- parted_q %>% 
+  dplyr::select(-ends_with("_sum")) %>% 
+  pivot_longer(-Fraction, names_to="Variable", values_to="Explained Variation (%)") %>% 
+  mutate(Variable=str_remove(Variable, pattern="^Share_")) %>% 
+  separate(Variable, into=c("q", "Abs_Perc"), sep = "_") %>% 
+  mutate(Abs_Perc=replace_na(Abs_Perc, "abs")) %>% 
+  mutate(q=str_extract(q, pattern="[0-9]")) %>% 
+  mutate(Fraction=factor(Fraction, 
+                         levels=c("Treatment", 
+                                  "Treatment:Year", 
+                                  "Year", 
+                                  "Quadrat", 
+                                  "Residual", 
+                                  "Total"))) %>% 
+  mutate(q=factor(q, levels=c("2", "0"), labels=c("q = 2", "q = 0"))) %>% 
+  arrange(Fraction)
 
+ggplot(data=parted_long_q %>% 
+         filter(Abs_Perc=="perc") %>% 
+         filter(Fraction!="Total") ) +
+  geom_col(aes(x=q, y=`Explained Variation (%)`, fill=Fraction, group=q), width=0.5) +
+  theme_minimal() + 
+  scale_fill_brewer(palette = "Dark2") + 
+  #guides(fill = guide_legend(reverse=TRUE)) + 
+  scale_x_discrete(name=NULL) + 
+  coord_flip() + 
+  theme(legend.position = "bottom", 
+        legend.title = element_blank())
 
-
+ggsave(last_plot(), file="../figure_tables/ExplainedVariation_Q.png", 
+       width = 8, height=2, units="in",dpi = 300)

@@ -923,7 +923,7 @@ checklist_elle <- checklist %>%
   mutate(Spring_ephemeral=replace(Spring_ephemeral, 
                                   list=Species_resolved %in% c("Adoxa moschatellina", "Corydalis cava", 
                                                                "Anemone apennina", "Cardamine bulbifera", 
-                                                               "Anemome ranunculoides", "Cardamine enneaphyllos"), 
+                                                               "Anemone ranunculoides", "Cardamine enneaphyllos"), 
                                   values=TRUE))
 
 ### Decompose the SS of the species x plot matrix after excluding therophytes and spring ephemerals
@@ -1117,7 +1117,7 @@ flora_betaq <- dist0 %>%
     theme_bw() + 
     facet_grid(q~.) + 
     #scale_color_discrete(name="Beta Diversity\nComponent") + 
-    scale_x_continuous(breaks = seq(2012, 2023, by=2)) + 
+    scale_x_continuous(breaks = seq(2012, 2022, by=2)) + 
     scale_color_brewer(palette = "Dark2", direction = -1) + 
     scale_fill_brewer(palette = "Dark2", direction = -1)
 )
@@ -1129,10 +1129,10 @@ flora_betaq <- dist0 %>%
              aes(x=Year2, y=beta, col=Treatment, fill=Treatment)) + 
   geom_point() + 
   #geom_smooth(alpha=0.2, method="lm") + 
-  geom_smooth(alpha=0.2, method="lm") +
+  geom_smooth(alpha=0.2) +
   theme_bw() + 
   facet_grid(q~.) + 
-  scale_x_continuous(name="Year", breaks = seq(2012, 2023, by=2)) + 
+  scale_x_continuous(name="Year", breaks = seq(2012, 2022, by=2)) + 
   scale_color_brewer(palette = "Dark2", direction = -1) + 
   scale_fill_brewer(palette = "Dark2", direction = -1)
 )

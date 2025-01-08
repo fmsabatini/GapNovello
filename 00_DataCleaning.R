@@ -6,7 +6,7 @@ library(zoo)
 # 
 
 ## Import, format and correct data
-flora0 <- readr::read_delim("../rawdata/inserimento_flora_2023.csv", delim=";", ) %>% 
+flora0 <- readr::read_delim("../rawdata/inserimento_flora_2024.csv", delim=";", ) %>% 
   select(-Plot) %>% 
   #mutate(Date=lubridate::as_date("Year", format=c("%d/%m/%y"))) %>% 
   mutate(Year=strptime(Year, format("%d/%m/%Y"))) %>% 
@@ -121,14 +121,29 @@ flora <- flora0 %>%
               select(species_original, species_resolved), 
             by=c("Species_original"="species_original")) %>% 
   relocate(species_resolved, .before=Cover) %>% 
-  rename(Species_resolved=species_resolved)
+  rename(Species_resolved=species_resolved) %>% 
+  ## manually resolve last four taxa
+  mutate(Species_resolved=replace(Species_resolved, 
+                                  list = Species_original=="Asplenium adiantum-nigrum adiantum-nigrum", 
+                                  values="Asplenium adiantum-nigrum")) %>% 
+  mutate(Species_resolved=replace(Species_resolved, 
+                                  list = Species_original=="Festuca altissima", 
+                                  values="Festuca altissima")) %>% 
+  mutate(Species_resolved=replace(Species_resolved, 
+                                  list = Species_original=="Lamium garganicum longiflorum", 
+                                  values="Lamium garganicum")) %>% 
+  mutate(Species_resolved=replace(Species_resolved, 
+                                  list = Species_original=="Hordelymus europaeus", 
+                                  values="Hordelymus europaeus"))
+
+
 
 
 
 ### Import plot-level data
-header0 <- read_delim("../rawdata/inserimento_stazionali_2023.csv", delim=";") %>% 
+header0 <- read_delim("../rawdata/inserimento_stazionali_2024.csv", delim=";") %>% 
   select(-Plot, Date=Day) %>% 
-  mutate(Date=lubridate::as_date(Date, format=c("%d/%m/%y") )) %>% 
+  mutate(Date=lubridate::dmy(Date) ) %>% 
   mutate(Year=lubridate::year(Date)) %>% 
   relocate(Quadrat, .before=1)  %>% 
   rowwise() %>% 

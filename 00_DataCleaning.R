@@ -1,6 +1,6 @@
 library(tidyverse)
 library(openxlsx)
-library(Taxonstand)
+#library(Taxonstand)
 library(zoo)
 
 # 
@@ -128,7 +128,7 @@ flora <- flora0 %>%
                                   values="Asplenium adiantum-nigrum")) %>% 
   mutate(Species_resolved=replace(Species_resolved, 
                                   list = Species_original=="Festuca altissima", 
-                                  values="Festuca altissima")) %>% 
+                                  values="Festuca drymeia")) %>% 
   mutate(Species_resolved=replace(Species_resolved, 
                                   list = Species_original=="Lamium garganicum longiflorum", 
                                   values="Lamium garganicum")) %>% 

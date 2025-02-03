@@ -1,11 +1,12 @@
 library(tidyverse)
 library(patchwork)
+library(zoo)
 library(nlme)
-library(lme4)
-library(partR2)
+#library(lme4)
 
 
-source("00_DataCleaning.R")
+load("../intermediate_steps/GapNovello_Data.RData")
+
 
 ### Ancillary functions ####
 ## Calculate rolling mean of change
@@ -25,9 +26,7 @@ combine.cover <- function(x){
 }
 
 
-### Figure 1 - Study area
-# Some exploratory analyses: ####
-### Figure 1: Create Map of plots ####
+### Figure 2 - Study area ####
 library(sf)
 library(rnaturalearth)
 library(ggspatial)
@@ -86,16 +85,6 @@ mybbox_small <- mybbox_small %>%
   st_as_sfc(crs=32633)
 
 
-# data from mybasemap don't have enough spatial resolution
-# mybasemap <- basemap_terra(st_bbox(mybbox %>%  
-#                                    st_transform("EPSG:3857")), 
-#                          map_service = "mapbox", 
-#                          map_type = "satellite",
-#                          map_token = "pk# .eyJ1IjoicmljY2FyZG8tdGVzdG9saW4iLCJhIjoiY2xyZjI0eGQ4MDBsajJpbWphbDk3ZXV2NCJ9# .UPqGPSyjN4htYm-4MMN2qA", 
-#                          map_dir="../intermediate_steps/basemap_data/") |> 
-#   st_transform("EPSG:32633")
-# 
-# 
 
 ## import georeferences screenshot from ORTOFOTO abruzzo 2018
 myrast <- terra::rast("../figure_tables/ORTOFOTO_ABRUZZO_gapNovello_georef.tif") %>% 
@@ -103,7 +92,7 @@ myrast <- terra::rast("../figure_tables/ORTOFOTO_ABRUZZO_gapNovello_georef.tif")
 
 right <- ggplot() +
   geom_sf(data=mybbox_small, fill=NA) + 
-  geom_spatial_rgb(data=myrast, 
+  terrainr::geom_spatial_rgb(data=myrast, 
                    mapping = aes(x = x,
                                  y = y,
                                  r = red,
@@ -125,7 +114,7 @@ right <- ggplot() +
 (both <- left + right)
 
 ggsave(plot = both, 
-       file.path("../figure_tables/", "Figure1_Studyarea.png"), 
+       file.path("../figure_tables/", "Figure2_Studyarea.png"), 
        dpi=300, bg="white", 
        type="cairo", width = 8, height=4, units = "in")
 
@@ -232,19 +221,19 @@ total_variance <- variance_real + variance_pseudo + 2 * covariance_real_pseudo
 cat("Variance of A:", variance_real, "\n")
 cat("Variance of B:", variance_pseudo, "\n")
 cat("Covariance between A and B:", covariance_real_pseudo, "\n")
-cat("Total Variance (A + B):", total_variance, "\n")
+cat("Total Variance (A + B + 2AB):", total_variance, "\n")
 
 variance_real + variance_pseudo + 2*covariance_real_pseudo
 
 
 
 real_dist <- vegan::vegdist(real, method="euclidean") ##already transformed into hellinger
-mydata <- data.frame(qyear=names(real_dist)) %>% 
+mydata <- data.frame(qyear=names(real_dist)) %>%
   separate(qyear, into=c("Quadrat", "Year"), sep="_") %>% 
   left_join(flora %>% 
               distinct(Quadrat, Treatment), 
             by="Quadrat")
-SS.deco.real <- vegan::adonis2(formula= real_dist ~ Treatment*Year + Quadrat, data=mydata, strata=mydata$Quadrat)
+SS.deco.real <- vegan::adonis2(formula= real_dist ~ Treatment*Year + Quadrat, data=mydata, strata=mydata$Quadrat, by="term")
 
 
 
@@ -254,41 +243,10 @@ mydata <- data.frame(qyear=names(tot_dist)) %>%
   left_join(flora %>% 
               distinct(Quadrat, Treatment), 
             by="Quadrat")
-SS.deco.tot <- vegan::adonis2(formula= tot_dist ~ Treatment*Year + Quadrat, data=mydata, strata=mydata$Quadrat)
+SS.deco.tot <- vegan::adonis2(formula= tot_dist ~ Treatment*Year + Quadrat, data=mydata, strata=mydata$Quadrat, by="term")
 
 
 #### Account for therophytes and spring ephemerals ####
-#### Life-history traits
-elle <- read_csv("../rawdata/Ellenberg_Pignatti_out.csv")
-checklist_elle <- checklist %>% 
-  mutate(pignatti_match=species_resolved) %>% 
-  mutate(pignatti_match=factor(pignatti_match)) %>% 
-  mutate(pignatti_match=fct_recode(pignatti_match,
-                                   `Festuca drymeia`="Festuca drymeja",
-                                   `Hieracium sylvaticum`="Hieracium murorum", 
-                                   `Mycelis muralis`="Lactuca muralis", 
-                                   `Lamiastrum galeobdolon`="Lamium galeobdolon", 
-                                   `Pulmonaria officinalis`="Pulmonaria apennina",
-                                   `Rubus hirtus`="Rubus proiectus")) %>% 
-  left_join(elle, by=c("pignatti_match"="Species")) %>% 
-  mutate(GF=replace(GF, 
-                    list=species_resolved %in% c("Hieracium murorum", "Trifolium pratense", "Fragaria vesca", "Veronica montana", "Veronica officinalis"), 
-                    values="H")) %>% 
-  mutate(LF=replace(LF, 
-                    list=species_resolved %in% c("Hieracium murorum", "Trifolium pratense"), 
-                    values="Scap"))  %>% 
-  mutate(LF=replace(LF, 
-                    list=species_resolved %in% c("Veronica montana", "Veronica officinalis"),
-                    values="Rept")) %>% 
-  dplyr::select(-c(1:5, 7)) %>% 
-  rename(Species_resolved=species_resolved) %>% 
-  distinct() %>% 
-  mutate(Spring_ephemeral=F) %>% 
-  mutate(Spring_ephemeral=replace(Spring_ephemeral, 
-                                  list=Species_resolved %in% c("Adoxa moschatellina", "Corydalis cava", 
-                                                               "Anemone apennina", "Cardamine bulbifera", 
-                                                               "Anemone ranunculoides", "Cardamine enneaphyllos"), 
-                                  values=TRUE))
 thero_list <- checklist_elle %>% 
   filter(GF=="T") %>% 
   pull(Species_resolved)
@@ -324,7 +282,7 @@ mydata <- data.frame(qyear=names(nothero_dist)) %>%
   left_join(flora %>% 
               distinct(Quadrat, Treatment), 
             by="Quadrat")
-SS.deco.nothero <- vegan::adonis2(formula= real_dist ~ Treatment*Year + Quadrat, data=mydata, strata=mydata$Quadrat)
+SS.deco.nothero <- vegan::adonis2(formula= real_dist ~ Treatment*Year + Quadrat, data=mydata, strata=mydata$Quadrat, by="term")
 
 variance_nothero <- ss.nothero[1]
 
@@ -356,7 +314,7 @@ mydata <- data.frame(qyear=names(nospring_dist)) %>%
   left_join(flora %>% 
               distinct(Quadrat, Treatment), 
             by="Quadrat")
-SS.deco.nospring <- vegan::adonis2(formula= real_dist ~ Treatment*Year + Quadrat, data=mydata, strata=mydata$Quadrat)
+SS.deco.nospring <- vegan::adonis2(formula= real_dist ~ Treatment*Year + Quadrat, data=mydata, strata=mydata$Quadrat, by="term")
 
 variance_nospring <- ss.nospring[1]
 
@@ -411,7 +369,7 @@ flextable(parted_long %>%
   save_as_docx(path = "../figure_tables/tableS1.docx")
 
 
-#### Figure 2 ####
+#### Figure 3 ####
 
 ggplot(data=parted_long %>% 
          filter(Abs_Perc=="perc") %>% 
@@ -438,7 +396,7 @@ ggsave(last_plot(), file="../figure_tables/Figure2_ExplainedVariation_pseudoturn
        width = 7, height=3, units="in",dpi = 300, bg = "white")
 
 
-#### Potential Figure Sxxx ####
+#### Figure S2 ####
 
 ggplot(data=parted_long %>% 
          filter(Abs_Perc=="perc") %>% 
@@ -473,16 +431,20 @@ flora_pooled2 <- flora_pooled %>%
   left_join(flora %>% 
               distinct(Quadrat, Treatment, Series), 
             by="Quadrat") %>% 
-  dplyr::select(-Cover)
+  # change below here for graphs with T data
+  dplyr::select(-Cover) #%>% 
+  #filter(!is.na(Cover)) %>% 
+  #mutate(Cover_roll = Cover)
+  
 
 
-#### Figure 3 ####
+#### Figure 4 ####
 (topleft <- ggplot(data=flora_pooled2 %>% 
                      group_by(Quadrat, Treatment, Series, Year) %>% 
                      #distinct(Species_resolved, .keep_all=T) %>% 
                      summarize(SR=n()) ) + 
    geom_line(aes(x=Year, y=SR, group=Quadrat, col=Treatment, linetype=Series)) + 
-   scale_x_continuous(breaks = seq(2012, 2022, by=2)) + 
+   scale_x_continuous(breaks = seq(2012, 2024, by=2)) + 
    scale_y_continuous(name="Species Richness") + 
    scale_color_brewer(palette = "Dark2", direction = -1) + 
    theme_bw()
@@ -495,7 +457,7 @@ flora_pooled2 <- flora_pooled %>%
                       summarize(Tot_cover=sum(Cover_roll)) %>%
                       arrange(Quadrat, Year)) + 
     geom_line(aes(x=Year, y=Tot_cover, group=Quadrat, col=Treatment, linetype=Series)) + 
-    scale_x_continuous(breaks = seq(2012, 2022, by=2)) + 
+    scale_x_continuous(breaks = seq(2012, 2024, by=2)) + 
     scale_y_continuous(name="Total Herb Layer Cover (%)") +
     scale_color_brewer(palette = "Dark2", direction = -1) + 
     theme_bw()
@@ -556,13 +518,13 @@ flora_sr <- flora_pooled2 %>%
 )
 
 
-Figure3 <- ((topleft + theme(legend.position="none")  |
+Figure4 <- ((topleft + theme(legend.position="none")  |
                topright+ theme(legend.position="none")) / 
               (bottomleft + theme(legend.position="none") |
                  bottomright + theme(legend.position="none"))) / 
   mylegend + plot_layout(height=c(6,6,1)) + plot_annotation(tag_levels = list(c("a", "b", 'c', "d", "")))
 
-ggsave(Figure3, file="../figure_tables/Figure3_SR_Cover_Change.png", 
+ggsave(Figure4, file="../figure_tables/Figure4_SR_Cover_Change.png", 
        width = 9, height=8, units="in",dpi = 300)
 #### end of Figure 3 
 
@@ -594,7 +556,19 @@ flora_pooled2 %>%
   View()
 
 
-#### NMDS ####
+flora_pooled2 %>% 
+  group_by(Quadrat, Treatment, Year) %>% 
+  summarize(Cover=sum(Cover_roll)) %>% 
+  group_by(Treatment, Year) %>% 
+  summarize(Cover=mean(Cover)) %>% 
+  mutate(DeltaCov=Cover-lag(Cover)) %>%
+  #group_by(Treatment) %>% 
+  #arrange(desc(abs(DeltaSR))) %>% 
+  #slice_head(n=5) %>% 
+  View()
+
+
+### NMDS ####
 # Convert species x plot level to wide format
 flora_wide <- flora_pooled2 %>% 
   ## filter(Layer=="U") %>% 
@@ -620,14 +594,14 @@ flora_envfit <- data.frame(flora_envfit0$vectors$arrows) %>%
    bind_cols(data.frame(r2=flora_envfit0$vectors$r, p=flora_envfit0$vectors$pvals)) %>% 
    rownames_to_column("Species") %>% 
    filter(p<0.05) %>% 
-   filter(r2>0.25) %>% 
+   filter(r2>0.33) %>% 
    arrange(desc(r2))
 
 
 signspecies <- flora_envfit$Species
 
 
-##### Figure 4 ####
+##### Figure 5 ####
 # Convert data to data.frame and add ancillary values
 flora_mds_scores <- flora_mds$points %>% 
   as.data.frame() %>% 
@@ -642,7 +616,7 @@ flora_mds_scores <- flora_mds$points %>%
 
 
 
-Figure4 <- ggplot(data=flora_mds_scores, aes(x=NMS1, y=NMS2)) +
+Figure5 <- ggplot(data=flora_mds_scores, aes(x=NMS1, y=NMS2)) +
   #  geom_point(aes(x=MDS1, y=MDS2, col=Quadrat)) + 
   geom_path(aes(group=Quadrat, col=Treatment, linetype=Series), arrow=arrow(angle = 15, length = unit(0.07, "inches"))) + 
   geom_point(data=flora_mds_scores %>% 
@@ -662,6 +636,7 @@ Figure4 <- ggplot(data=flora_mds_scores, aes(x=NMS1, y=NMS2)) +
   theme(panel.grid = element_blank())
 
 
+## Alternative to Figure 5 to show loads of envfit species - not shown in papaer
 ggplot(data=flora_mds_scores, aes(x=NMS1, y=NMS2)) +
   #  geom_point(aes(x=MDS1, y=MDS2, col=Quadrat)) + 
   geom_path(aes(group=Quadrat, col=Treatment, linetype=Series), arrow=arrow(angle = 15, length = unit(0.07, "inches")), alpha=0.2) + 
@@ -683,14 +658,14 @@ ggplot(data=flora_mds_scores, aes(x=NMS1, y=NMS2)) +
 
 
 
-ggsave(Figure4, file="../figure_tables/Figure4_NMDS.png", 
+ggsave(Figure5, file="../figure_tables/Figure5_NMDS.png", 
        width = 5, height=4, units="in",dpi = 300)
 
 
 
 
 
-#### GLMMs SR, Cover, Gain/Loss, Beta0 ####
+### GLMMs SR, Cover####
 
 ### Ancillary function to make graphs of predictions with C.I.
 myplot_lme <- function(mydata, response_var, pred_data, mymod){
@@ -740,6 +715,7 @@ floraSR <- flora_pooled2 %>%
   mutate(DeltaYear=Year-2012, LogDeltaYear=log(DeltaYear+1)) %>% 
   ungroup() %>% 
   filter(complete.cases(.)) # %>% 
+  ## Deprecated code to calculate species gains and losses
 #  left_join(flora %>% 
 #              filter(Layer=="U") %>% 
 #              group_by(Quadrat, Treatment, Series, Year) %>% 
@@ -776,8 +752,7 @@ mod5 <- lme(DeltaSR ~ Treatment * DeltaYear + Openness, data=floraSR,
             correlation = corAR1(form = ~1 | Quadrat))
 
 MuMIn::AICc(mod1, mod2, mod3, mod4, mod5)
-## Best model is mod1: Treatment*DeltaYear -- But I feel corAR is needed being longitudinal data
-## Phi is extremely low!
+## Best model is mod2: Treatment*DeltaYear with corAR
 ## Quadratic term not needed
 ## Openness not needed
 
@@ -803,7 +778,7 @@ newdat$pred <- predict(mod2, newdata=newdat,level=0)
 
 ## code to predict response at round intervals
 newdat <- expand.grid(Treatment=unique(floraSR$Treatment),
-                     LogDeltaYear=log(0:12+1))
+                     LogDeltaYear=log(0:13+1))
 newdat$pred <- predict(mod2, newdata=newdat,level=0)
 newdat %>% 
  mutate(DeltaYear=exp(LogDeltaYear)-1) %>% 
@@ -867,7 +842,7 @@ newdat2$SE2 <- sqrt(predvar+mod_cov2$sigma^2)
 ## code to predict response at round intervals
 
 newdat <- expand.grid(Treatment=unique(floraSR$Treatment),
-                      LogDeltaYear=log(0:12+1))
+                      LogDeltaYear=log(0:13+1))
 newdat$pred <- predict(mod_cov2, newdata=newdat,level=0)
 newdat %>% 
   mutate(DeltaYear=exp(LogDeltaYear)-1) %>% 
@@ -882,14 +857,14 @@ right_Cov <- myplot_lme(mydata = floraSR, "DeltaCov", newdat2, mod_cov2)
 
 
 
-##### Figure 5 ####
+##### Figure 6 ####
 (left_SR + 
     theme(legend.position = "none") + 
     scale_y_continuous(name="Delta Species Richness")) | 
   (right_Cov + scale_y_continuous(name="Delta Cover")) + 
   plot_annotation(tag_levels = "a")
 
-ggsave(filename="../figure_tables/Figure5_SR_lme.png", width=8, height=4, units = "in", dpi=300)
+ggsave(filename="../figure_tables/Figure6_SR_lme.png", width=8, height=4, units = "in", dpi=300)
 
 
 
@@ -927,16 +902,16 @@ mod_covT <- lme(DeltaCov ~ Treatment * LogDeltaYear +0,
                 correlation = corAR1(form = ~1 | Quadrat))
 
 
-library(flextable)
-library(modelsummary)
-modelsummary(list("SR (R Matrix)" = mod2, 
-                  "SR (T Matrix)" = modT, 
-                  "Cover (R Matrix)" = mod_cov2, 
-                  "Cover (T Matrix)" = mod_covT), 
-             fmt = 2,  
-             estimate  = c("{estimate}{stars}"))
-
-## I don't understand why for matrix T it doesn't show the R2 Cond!
+# library(flextable)
+# library(modelsummary)
+# modelsummary(list("SR (R Matrix)" = mod2, 
+#                   "SR (T Matrix)" = modT, 
+#                   "Cover (R Matrix)" = mod_cov2, 
+#                   "Cover (T Matrix)" = mod_covT), 
+#              fmt = 2,  
+#              estimate  = c("{estimate}{stars}"))
+# 
+# 
 
 
 
@@ -1032,146 +1007,6 @@ modelsummary(list("SR (R Matrix)" = mod2,
 ## ggsave(filename="../figure_tables/FigureXXX_GainLosses_lme.png", width=8, height=6, units = "in", dpi=300)
 ## 
 ## 
-
-
-
-
-### DEPRECATED BELOW ####
-#### Variation decomposition with PartR2 ####
-### refit the models with lme4
-##variation decomposition to account for interactions as suggested in Stoffel, Fig 2 C
-floraSR <- floraSR %>% 
-  mutate(Treatment=factor(Treatment, levels=c("Margin", "Gap", "Interior"))) # change baseline treatment
-mod1c <- lmer(DeltaSR ~Treatment * LogDeltaYear  + (1|Quadrat), data=floraSR)
-part1 <- partR2(mod1c, 
-                partvars = c("Treatment:LogDeltaYear"), 
-                nboot=NULL, 
-                R2_type = "marginal")
-mod2c <- lmer(DeltaSR ~Treatment + LogDeltaYear + (1|Quadrat), data=floraSR)
-part2 <- partR2(mod2c, 
-                partvars = c("Treatment", "LogDeltaYear"), 
-                nboot=NULL, 
-                R2_type = "marginal")
-SRvarpart <- mergeR2(part1, part2)
-summary(SRvarpart)
-
-mod1crandom <- partR2(mod1c, R2_type = "conditional")
-
-forestplot(SRvarpart, type = "R2")
-forestplot(SRvarpart, "IR2")
-
-
-
-mydeco <- partR2(mod1c, R2_type="conditional")$R2 %>% 
-  mutate(term="Conditional") %>% 
-  bind_rows(SRvarpart$R2 %>% 
-              slice(-nrow(.))) %>% 
-  dplyr::select(term:estimate) %>% 
-  pivot_wider(names_from = term, values_from = estimate) %>% 
-  rename(Marginal=Full, 
-         Total=Conditional, 
-         Year=LogDeltaYear,
-         `Treatment:Year`= `Treatment:LogDeltaYear`) %>% 
-  mutate(Quadrat=Total-Marginal) %>% 
-  relocate(Quadrat, .after = "Marginal") %>% 
-  relocate(Treatment:Year, .after = "Quadrat") %>% 
-  mutate(Residual=1-Total) %>% 
-  dplyr::select(-Marginal) %>% 
-  pivot_longer(cols=Total:Residual, 
-               names_to="Fraction", 
-               values_to="Explained Variation (%)") %>% 
-  mutate(Fraction=factor(Fraction, 
-                         levels=c("Treatment", 
-                                  "Treatment:Year", 
-                                  "Year", 
-                                  "Quadrat", 
-                                  "Residual", 
-                                  "Total"))) %>% 
-  arrange(Fraction) %>% 
-  mutate(model=1)
-
-
-ggplot(data=mydeco %>% 
-         filter(Fraction!="Total")) + 
-  geom_col(aes(x=model, y=`Explained Variation (%)`, fill=Fraction, group=model), 
-           width=0.5) +
-  theme_minimal() + 
-  scale_fill_brewer(palette = "Paired") + 
-  #guides(fill = guide_legend(reverse=TRUE)) + 
-  scale_x_discrete(name=NULL) + 
-  coord_flip() + 
-  theme(legend.position = "bottom", 
-        legend.title = element_blank(), 
-        axis.text.y = element_blank())  
-  
-
-
-
-
-#### Compare temporal turnover across disturbed and undisturbed plots ####
-##  
-##  
-##  
-##  
-##  plot_index <- sapply(rownames(flora_wide), function(x){strsplit(x, split = "_")[[1]][[1]]})
-##  ### True Diversity approach - to account for undersampling
-##  Qjac <- function(x, q){
-##    source("D:/Nextcloud/MyFunctions/div.dec.R")
-##    x <- flora_wide
-##    nr <- nrow(x) #plots
-##    nc <- ncol(x) #species
-##    distij <- matrix(NA, nrow=nr, ncol=nr, dimnames = list(rownames(flora_wide), rownames(flora_wide)))
-##    diag(distij) <- 0
-##    
-##    for(i in 1:(nr-1)){
-##      for(j in (i+1):nr){
-##        xij <- flora_wide[c(i,j),]
-##        distij[i,j] <- distij[j,i] <- 1-((2/div.dec(xij, q=q, w="even")[[2]])-1)
-##      }
-##    }
-##    return(as.dist(distij))
-##  }
-##  
-##  dist0 <- Qjac(flora_wide, q=0)
-##  dist2 <- Qjac(flora_wide, q=2)
-##  
-##  
-##  
-##  flora_betaq <- dist0 %>% 
-##    as.matrix() %>% 
-##    as.data.frame() %>% 
-##    rownames_to_column("Quadrat_year") %>% 
-##    pivot_longer(-Quadrat_year, names_to = "Quadrat_year2", values_to="beta0") %>% 
-##    left_join(dist2 %>% 
-##                as.matrix() %>% 
-##                as.data.frame() %>% 
-##                rownames_to_column("Quadrat_year") %>% 
-##                pivot_longer(-Quadrat_year, names_to = "Quadrat_year2", values_to="beta2"), 
-##              by=c("Quadrat_year", "Quadrat_year2")) %>% 
-##    separate(Quadrat_year, into=c("Quadrat1", "Year1")) %>% 
-##    separate(Quadrat_year2, into=c("Quadrat2", "Year2")) %>% 
-##    filter(Quadrat1==Quadrat2) %>% 
-##    select(-Quadrat2, Quadrat=Quadrat1) %>% 
-##    mutate_at(.vars=vars(starts_with("Year")), 
-##              .funs = list(~as.numeric(.))) %>% 
-##    #filter(Year1== Year2-1) %>% 
-##    mutate(Treatment=str_extract(Quadrat, pattern="G|20|40")) %>% 
-##    mutate(Treatment=fct_recode(factor(Treatment, 
-##                                       levels=c("G", "20", "40")), 
-##                                "Gap"="G", 
-##                                "Margin"="20", 
-##                                "Interior"="40")) %>% 
-##    pivot_longer(cols=beta0:beta2, names_to="q", values_to="beta") 
-##  
-##  
-##  ggplot(data=flora_betaq %>% 
-##           filter(Year2 == Year1+1) #%>% 
-##           #filter(q == "beta2")
-##           ) + 
-##    geom_density(aes(x=beta, col=Treatment, group=Treatment)) + 
-##    theme_bw() + 
-##    facet_wrap(.~q)
-##  
 
 
 

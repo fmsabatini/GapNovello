@@ -162,4 +162,42 @@ header0 <- read_delim("../rawdata/inserimento_stazionali_2024.csv", delim=";") %
                              "E"=c("W", "E")))
 
 
+#### Life-history traits
+elle <- read_csv("../rawdata/Ellenberg_Pignatti_out.csv")
+checklist_elle <- checklist %>% 
+  mutate(pignatti_match=species_resolved) %>% 
+  mutate(pignatti_match=factor(pignatti_match)) %>% 
+  mutate(pignatti_match=fct_recode(pignatti_match,
+                                   `Festuca drymeia`="Festuca drymeja",
+                                   `Hieracium sylvaticum`="Hieracium murorum", 
+                                   `Mycelis muralis`="Lactuca muralis", 
+                                   `Lamiastrum galeobdolon`="Lamium galeobdolon", 
+                                   `Pulmonaria officinalis`="Pulmonaria apennina",
+                                   `Rubus hirtus`="Rubus proiectus")) %>% 
+  left_join(elle, by=c("pignatti_match"="Species")) %>% 
+  mutate(GF=replace(GF, 
+                    list=species_resolved %in% c("Hieracium murorum", "Trifolium pratense", "Fragaria vesca", "Veronica montana", "Veronica officinalis"), 
+                    values="H")) %>% 
+  mutate(LF=replace(LF, 
+                    list=species_resolved %in% c("Hieracium murorum", "Trifolium pratense"), 
+                    values="Scap"))  %>% 
+  mutate(LF=replace(LF, 
+                    list=species_resolved %in% c("Veronica montana", "Veronica officinalis"),
+                    values="Rept")) %>% 
+  dplyr::select(-c(1:5, 7)) %>% 
+  rename(Species_resolved=species_resolved) %>% 
+  distinct() %>% 
+  mutate(Spring_ephemeral=F) %>% 
+  mutate(Spring_ephemeral=replace(Spring_ephemeral, 
+                                  list=Species_resolved %in% c("Adoxa moschatellina", "Corydalis cava", 
+                                                               "Anemone apennina", "Cardamine bulbifera", 
+                                                               "Anemone ranunculoides", "Cardamine enneaphyllos"), 
+                                  values=TRUE))
+
+
+
+
+save(flora, header0, checklist_elle, file = "../intermediate_steps/GapNovello_Data.RData")
+
+
 

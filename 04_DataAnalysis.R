@@ -119,6 +119,26 @@ ggsave(plot = both,
        type="cairo", width = 8, height=4, units = "in")
 
 
+### FigXX - Canopy Openness ####
+### Graph of canopy openness with time by plot
+(Figxx <- ggplot(data=header0 %>% 
+                      group_by(Quadrat, Treatment, Series, Year) %>% 
+                      summarize(Avg_Openness=Openness) %>%
+                      arrange(Quadrat, Year)) + 
+    geom_line(aes(x=Year, y=Avg_Openness, 
+                  group=Quadrat, 
+                  col=Treatment, 
+                  #linetype=Series
+                  )) + 
+    scale_x_continuous(breaks = seq(2012, 2024, by=2)) + 
+    scale_y_continuous(name="Canopy Openness (%)") +
+    scale_color_brewer(palette = "Dark2", direction = -1) + 
+    theme_bw()
+)
+
+
+ggsave(last_plot(), file="../figure_tables/FigureS1_canopyOpenness.png", 
+       width = 5, height=4, units="in",dpi = 300, bg = "white")
 
 ### RQ1 - Account for pseudoturnover  ####
 ## Pool species entries using a 3-year moving window
@@ -172,8 +192,10 @@ flora_wide <- flora %>%
 ### Real turnover == flora_wide_pooled
 ### Pseudoturnover == Flora_wide - flora_wide_pooled
 
-tot <- vegan::decostand(flora_wide, "hellinger")
-real <- vegan::decostand(flora_wide_pooled, "hellinger")
+tot <- vegan::decostand(flora_wide, "hellinger", MARGIN=1)
+row_totals <- rowSums(flora_wide)
+real <- sqrt(sweep(flora_wide_pooled, MARGIN=1, row_totals, FUN="/"))
+#real2 <- vegan::decostand(flora_wide_pooled, "hellinger") Not equivalente to formulation above!
 pseudo <- tot-real
 
 #ss.tot <- adespatial::beta.div(Y=tot, method = "euclidean")$beta
@@ -226,24 +248,22 @@ cat("Total Variance (A + B + 2AB):", total_variance, "\n")
 variance_real + variance_pseudo + 2*covariance_real_pseudo
 
 
-
-real_dist <- vegan::vegdist(real, method="euclidean") ##already transformed into hellinger
-mydata <- data.frame(qyear=names(real_dist)) %>%
+## Permanova on Real
+mydata <- data.frame(qyear=rownames(real)) %>%
   separate(qyear, into=c("Quadrat", "Year"), sep="_") %>% 
   left_join(flora %>% 
               distinct(Quadrat, Treatment), 
             by="Quadrat")
-SS.deco.real <- vegan::adonis2(formula= real_dist ~ Treatment*Year + Quadrat, data=mydata, strata=mydata$Quadrat, by="term")
+SS.deco.real <- vegan::adonis2(formula= real ~ Treatment*Year + Quadrat, data=mydata, strata=mydata$Quadrat, by="term", method="euclidean")
 
 
-
-tot_dist <- vegan::vegdist(tot, method="euclidean")
-mydata <- data.frame(qyear=names(tot_dist)) %>% 
+## Permanova on Tot
+mydata <- data.frame(qyear=rownames(tot)) %>% 
   separate(qyear, into=c("Quadrat", "Year"), sep="_") %>% 
   left_join(flora %>% 
               distinct(Quadrat, Treatment), 
             by="Quadrat")
-SS.deco.tot <- vegan::adonis2(formula= tot_dist ~ Treatment*Year + Quadrat, data=mydata, strata=mydata$Quadrat, by="term")
+SS.deco.tot <- vegan::adonis2(formula= tot ~ Treatment*Year + Quadrat, data=mydata, strata=mydata$Quadrat, by="term", method="euclidean")
 
 
 #### Account for therophytes and spring ephemerals ####
@@ -271,18 +291,19 @@ flora_wide_nothero <- flora_pooled %>%
   #View()
   column_to_rownames("Quadrat_year")
 
-nothero <- vegan::decostand(flora_wide_nothero, "hellinger")
+#nothero <- vegan::decostand(flora_wide_nothero, "hellinger")
+nothero <- sqrt(sweep(flora_wide_nothero, MARGIN=1, row_totals, FUN="/"))
+
 
 (ss.nothero <- adespatial::beta.div(Y=nothero, method = "euclidean")$beta)
 
 
-nothero_dist <- vegan::vegdist(nothero, method="euclidean") ##already transformed into hellinger
-mydata <- data.frame(qyear=names(nothero_dist)) %>% 
+mydata <- data.frame(qyear=rownames(nothero)) %>% 
   separate(qyear, into=c("Quadrat", "Year"), sep="_") %>% 
   left_join(flora %>% 
               distinct(Quadrat, Treatment), 
             by="Quadrat")
-SS.deco.nothero <- vegan::adonis2(formula= real_dist ~ Treatment*Year + Quadrat, data=mydata, strata=mydata$Quadrat, by="term")
+SS.deco.nothero <- vegan::adonis2(formula= nothero ~ Treatment*Year + Quadrat, data=mydata, strata=mydata$Quadrat, by="term")
 
 variance_nothero <- ss.nothero[1]
 
@@ -303,20 +324,21 @@ flora_wide_nospring <- flora_pooled %>%
   #View()
   column_to_rownames("Quadrat_year")
 
-nospring <- vegan::decostand(flora_wide_nospring, "hellinger")
+#nospring <- vegan::decostand(flora_wide_nospring, "hellinger")
+nospring <- sqrt(sweep(flora_wide_nospring, MARGIN=1, row_totals, FUN="/"))
+
 
 (ss.nospring <- adespatial::beta.div(Y=nospring, method = "euclidean")$beta)
 
 
-nospring_dist <- vegan::vegdist(nospring, method="euclidean") ##already transformed into hellinger
-mydata <- data.frame(qyear=names(nospring_dist)) %>% 
+mydata <- data.frame(qyear=rownames(nospring)) %>% 
   separate(qyear, into=c("Quadrat", "Year"), sep="_") %>% 
   left_join(flora %>% 
               distinct(Quadrat, Treatment), 
             by="Quadrat")
-SS.deco.nospring <- vegan::adonis2(formula= real_dist ~ Treatment*Year + Quadrat, data=mydata, strata=mydata$Quadrat, by="term")
+SS.deco.nospring <- vegan::adonis2(formula= nospring ~ Treatment*Year + Quadrat, data=mydata, strata=mydata$Quadrat, by="term")
 
-variance_nospring <- ss.nospring[1]
+(variance_nospring <- ss.nospring[1])
 
 
 
@@ -369,6 +391,19 @@ flextable(parted_long %>%
   save_as_docx(path = "../figure_tables/tableS1.docx")
 
 
+parted_long %>% 
+  filter(Abs_Perc=="perc") %>% 
+  filter(Fraction!="Total") %>% 
+  filter(model %in% c("Total", "Real")) %>% 
+  group_by(model) %>% 
+  mutate(label_y=cumsum(`Explained Variation (%)`)) %>% 
+  arrange(model, Fraction) %>% 
+  mutate(label_y_mid=label_y-(`Explained Variation (%)`/2)) %>% 
+  mutate(label_y_mid=replace(label_y_mid, 
+                             list=label_y_mid>99,
+                             values=99))
+
+
 #### Figure 3 ####
 
 ggplot(data=parted_long %>% 
@@ -376,12 +411,20 @@ ggplot(data=parted_long %>%
          filter(Fraction!="Total") %>% 
          filter(model %in% c("Total", "Real")) %>% 
          group_by(model) %>% 
-         mutate(label_y=cumsum(`Explained Variation (%)`))) +
+         mutate(label_y=cumsum(`Explained Variation (%)`)) %>% 
+         arrange(model, Fraction) %>% 
+         mutate(label_y_mid=label_y-(`Explained Variation (%)`/2)) %>% 
+         mutate(label_y_mid=replace(label_y_mid, 
+                                    list=label_y_mid>99,
+                                    values=97))) +
   geom_col(aes(x=model, y=`Explained Variation (%)`, fill=Fraction, group=model), width=0.5) +
-  geom_text(aes(x=model, y=label_y, label = ifelse(round(`Explained Variation (%)`,1) != 0, 
+  geom_text(aes(x=model, 
+                y=label_y_mid, 
+                label = ifelse(round(`Explained Variation (%)`,1) != 0, 
                                                    round(`Explained Variation (%)`,1),
-                                                   NA), group=model), 
-            hjust = 1.5, 
+                                                   NA), 
+                               group=model), 
+            hjust = 0.5, 
             colour = "white") +
   theme_minimal() + 
   scale_fill_brewer(palette = "Paired") + 
@@ -392,7 +435,7 @@ ggplot(data=parted_long %>%
         legend.title = element_blank()) 
 #axis.text.y = element_blank())
 
-ggsave(last_plot(), file="../figure_tables/Figure2_ExplainedVariation_pseudoturnover.png", 
+ggsave(last_plot(), file="../figure_tables/Figure3_ExplainedVariation_pseudoturnover.png", 
        width = 7, height=3, units="in",dpi = 300, bg = "white")
 
 
@@ -401,13 +444,22 @@ ggsave(last_plot(), file="../figure_tables/Figure2_ExplainedVariation_pseudoturn
 ggplot(data=parted_long %>% 
          filter(Abs_Perc=="perc") %>% 
          filter(Fraction!="Total") %>% 
-         #filter(model %in% c("Total", "Real"))
+         #filter(model %in% c("Total", "Real")) %>% 
          group_by(model) %>% 
-         mutate(label_y=cumsum(`Explained Variation (%)`))
-) +
+         mutate(label_y=cumsum(`Explained Variation (%)`)) %>% 
+         arrange(model, Fraction) %>% 
+         mutate(label_y_mid=label_y-(`Explained Variation (%)`/2)) %>% 
+         mutate(label_y_mid=replace(label_y_mid, 
+                                    list=label_y_mid>98,
+                                    values=97))) +
   geom_col(aes(x=model, y=`Explained Variation (%)`, fill=Fraction, group=model), width=0.5) +
-  geom_text(aes(x=model, y=label_y, label = round(`Explained Variation (%)`,1), group=model), 
-            hjust = 1.5, 
+  geom_text(aes(x=model, 
+                y=label_y_mid, 
+                label = ifelse(round(`Explained Variation (%)`,1) != 0, 
+                               round(`Explained Variation (%)`,1),
+                               NA), 
+                group=model), 
+            hjust = 0.5, 
             colour = "white") +
   theme_minimal() + 
   scale_fill_brewer(palette = "Paired") + 
@@ -418,7 +470,7 @@ ggplot(data=parted_long %>%
         legend.title = element_blank()) 
 #axis.text.y = element_blank())
 
-ggsave(last_plot(), file="../figure_tables/AppendixS2_ExplainedVariation_alternatives.png", 
+ggsave(last_plot(), file="../figure_tables/FigureS2_ExplainedVariation_alternatives.png", 
        width = 7, height=3, units="in",dpi = 300, bg = "white")
 
 
@@ -677,9 +729,10 @@ myplot_lme <- function(mydata, response_var, pred_data, mymod){
     geom_point(data=mydata, 
                aes(x=jitter(LogDeltaYear), y=response_var, 
                    colour=Treatment), alpha=0.7) +
-    geom_line(data=mydata, 
-              aes(x=LogDeltaYear, y=predict(mymod), 
-                  group=Quadrat, color=Treatment), alpha=0.3) +
+    ### add lines of quadrat level predictions
+    #geom_line(data=mydata, 
+    #          aes(x=LogDeltaYear, y=predict(mymod), 
+    #              group=Quadrat, color=Treatment), alpha=0.3) +
     geom_line(aes(y=pred, x=LogDeltaYear, color=Treatment)) +
     #geom_ribbon(data=pred_data, aes(x=DeltaYear,ymin=pred-2*SE2,ymax=pred+2*SE2, fill=Treatment),alpha=0.2) +
     geom_ribbon(aes(x=LogDeltaYear,ymin=pred-2*SE,ymax=pred+2*SE, fill=Treatment),alpha=0.2) +
@@ -774,20 +827,7 @@ newdat <- expand.grid(Treatment=unique(floraSR$Treatment),
                       LogDeltaYear=seq(from=min(floraSR$LogDeltaYear),
                                        to=max(floraSR$LogDeltaYear), 
                                        length.out=101))
-newdat$pred <- predict(mod2, newdata=newdat,level=0)
-
-## code to predict response at round intervals
-newdat <- expand.grid(Treatment=unique(floraSR$Treatment),
-                     LogDeltaYear=log(0:13+1))
-newdat$pred <- predict(mod2, newdata=newdat,level=0)
-newdat %>% 
- mutate(DeltaYear=exp(LogDeltaYear)-1) %>% 
- arrange(Treatment, LogDeltaYear) %>% 
- group_by(Treatment) %>% 
- mutate(diff = pred - lag(pred, n=1L)) %>% 
- View()
-
-
+newdat$pred <- predict(mod2, newdata=newdat, level=0)
 
 #create design matrix
 Designmat <- model.matrix(eval(eval(mod2$call$fixed)[-2]), newdat[-ncol(newdat)])
@@ -799,6 +839,19 @@ newdat$SE2 <- sqrt(predvar+mod2$sigma^2)
 
 #### Plot predicted responses of DeltaSR 
 left_SR <- myplot_lme(mydata = floraSR, "DeltaSR", newdat, mod2)
+
+## code to predict response at round intervals
+newdat4 <- expand.grid(Treatment=unique(floraSR$Treatment),
+                      LogDeltaYear=log(0:13+1))
+newdat4$pred <- predict(mod2, newdata=newdat4, level=0)
+newdat4 %>% 
+  mutate(DeltaYear=exp(LogDeltaYear)-1) %>% 
+  arrange(Treatment, LogDeltaYear) %>% 
+  group_by(Treatment) %>% 
+  mutate(diff = pred - lag(pred, n=1L)) %>% 
+  View()
+
+
 
 
 
@@ -838,22 +891,21 @@ predvar <- diag(Designmat %*% mod_cov2$varFix %*% t(Designmat))
 newdat2$SE <- sqrt(predvar) 
 newdat2$SE2 <- sqrt(predvar+mod_cov2$sigma^2)
 
+#### Plot predicted responses of DeltaCov 
+right_Cov <- myplot_lme(mydata = floraSR, "DeltaCov", newdat2, mod_cov2)
 
 ## code to predict response at round intervals
 
-newdat <- expand.grid(Treatment=unique(floraSR$Treatment),
-                      LogDeltaYear=log(0:13+1))
-newdat$pred <- predict(mod_cov2, newdata=newdat,level=0)
-newdat %>% 
+newdat3 <- expand.grid(Treatment=unique(floraSR$Treatment),
+                       LogDeltaYear=log(0:13+1))
+newdat3$pred <- predict(mod_cov2, newdata=newdat3,level=0)
+newdat3 %>% 
   mutate(DeltaYear=exp(LogDeltaYear)-1) %>% 
   arrange(Treatment, LogDeltaYear) %>% 
   group_by(Treatment) %>% 
   mutate(diff = pred - lag(pred, n=1L)) %>% 
   View()
 
-
-#### Plot predicted responses of DeltaCov 
-right_Cov <- myplot_lme(mydata = floraSR, "DeltaCov", newdat2, mod_cov2)
 
 
 
@@ -896,10 +948,62 @@ modT <- nlme::lme(DeltaSR ~ Treatment * LogDeltaYear + 0,
             random=(~1|Quadrat), 
             correlation = corAR1(form = ~1 | Quadrat))
 
+### predict response
+newdat <- expand.grid(Treatment=unique(floraSR$Treatment),
+                      LogDeltaYear=seq(from=min(floraSR$LogDeltaYear),
+                                       to=max(floraSR$LogDeltaYear), 
+                                       length.out=101))
+newdat$pred <- predict(modT, newdata=newdat, level=0)
+
+#create design matrix
+Designmat <- model.matrix(eval(eval(modT$call$fixed)[-2]), newdat[-ncol(newdat)])
+
+#compute standard error for predictions
+predvar <- diag(Designmat %*% modT$varFix %*% t(Designmat))
+newdat$SE <- sqrt(predvar) 
+newdat$SE2 <- sqrt(predvar+modT$sigma^2)
+
+#### Plot predicted responses of DeltaSR 
+left_SR_T <- myplot_lme(mydata = floraSR, "DeltaSR", newdat, modT)
+
+
+
 mod_covT <- lme(DeltaCov ~ Treatment * LogDeltaYear +0, 
                 data=floraSR_T, 
                 random=(~1|Quadrat), 
                 correlation = corAR1(form = ~1 | Quadrat))
+
+
+
+## Predict new data to plot response
+newdat2 <- newdat
+newdat2$pred <- predict(mod_covT, newdata=newdat2,level=0)
+
+#create design matrix
+Designmat <- model.matrix(eval(eval(mod_covT$call$fixed)[-2]), newdat[-ncol(newdat2)])
+
+#compute standard error for predictions
+predvar <- diag(Designmat %*% mod_covT$varFix %*% t(Designmat))
+newdat2$SE <- sqrt(predvar) 
+newdat2$SE2 <- sqrt(predvar+mod_covT$sigma^2)
+
+#### Plot predicted responses of DeltaCov 
+right_Cov_T <- myplot_lme(mydata = floraSR, "DeltaCov", newdat2, mod_covT)
+
+
+##### Figure 6 ####
+(left_SR_T + 
+   theme(legend.position = "none") + 
+   scale_y_continuous(name="Delta Species Richness")) | 
+  (right_Cov_T + scale_y_continuous(name="Delta Cover")) + 
+  plot_annotation(tag_levels = "a")
+
+ggsave(filename="../figure_tables/FigureS5_SR_lme.png", width=8, height=4, units = "in", dpi=300)
+
+
+
+
+
 
 
 # library(flextable)

@@ -199,5 +199,12 @@ checklist_elle <- checklist %>%
 
 save(flora, header0, checklist_elle, file = "../intermediate_steps/GapNovello_Data.RData")
 
+write_csv(flora, 
+          file="../intermediate_steps/flora_clean.csv", na="")
+write_csv(header0, 
+          file="../intermediate_steps/header_clean.csv", na="")
+write_csv(checklist_elle, 
+          file="../intermediate_steps/checklist_elle_clean.csv", na="")
+
 
 

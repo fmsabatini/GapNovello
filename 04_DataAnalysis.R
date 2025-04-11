@@ -187,23 +187,23 @@ flora_wide <- flora %>%
 
 
 ### Approach to decompose the species x site matrix into
-### TOT variation = Real turnover + Pseudoturnover matrix
+### TOT variation = residual turnover + Pseudoturnover matrix
 ### TOT variation == Flora_wide
-### Real turnover == flora_wide_pooled
+### residual turnover == flora_wide_pooled
 ### Pseudoturnover == Flora_wide - flora_wide_pooled
 
 tot <- vegan::decostand(flora_wide, "hellinger", MARGIN=1)
 row_totals <- rowSums(flora_wide)
-real <- sqrt(sweep(flora_wide_pooled, MARGIN=1, row_totals, FUN="/"))
-#real2 <- vegan::decostand(flora_wide_pooled, "hellinger") Not equivalente to formulation above!
-pseudo <- tot-real
+residual <- sqrt(sweep(flora_wide_pooled, MARGIN=1, row_totals, FUN="/"))
+#residual2 <- vegan::decostand(flora_wide_pooled, "hellinger") Not equivalente to formulation above!
+pseudo <- tot-residual
 
 #ss.tot <- adespatial::beta.div(Y=tot, method = "euclidean")$beta
-#ss.real <- adespatial::beta.div(Y=real, method = "euclidean")$beta
+#ss.residual <- adespatial::beta.div(Y=residual, method = "euclidean")$beta
 #ss.pseudo <- adespatial::beta.div(Y=pseudo, method = "euclidean")$beta
 
 (ss.tot <- sum((t(tot)-rowMeans(t(tot)))^2))
-(ss.real <- sum((t(real)-rowMeans(t(real)))^2))
+(ss.residual <- sum((t(residual)-rowMeans(t(residual)))^2))
 (ss.pseudo <- sum((t(pseudo)-rowMeans(t(pseudo)))^2))
 
 
@@ -219,42 +219,42 @@ variance_total <- sum(deviations_total^2)
 cat("Variance of Total Matrix (A + B):", variance_total, "\n")
 
 
-# Assuming your initial matrix is the sum of matrices real + pseudo
+# Assuming your initial matrix is the sum of matrices residual + pseudo
 # Calculate mean abundance for each site for A and B
-site_means_real <- colMeans(real)
+site_means_residual <- colMeans(residual)
 site_means_pseudo <- colMeans(pseudo)
 
 # Calculate deviations from site means for A and B
-deviations_real <- real - outer(rep(1, nrow(real)), site_means_real, FUN = "*")
+deviations_residual <- residual - outer(rep(1, nrow(residual)), site_means_residual, FUN = "*")
 deviations_pseudo <- pseudo - outer(rep(1, nrow(pseudo)), 
                                     site_means_pseudo, FUN = "*")
 
 # Calculate variances for A and B
-variance_real <- sum(deviations_real^2)
+variance_residual <- sum(deviations_residual^2)
 variance_pseudo <- sum(deviations_pseudo^2)
 
 # Calculate covariance between A and B
-covariance_real_pseudo <- sum(deviations_real * deviations_pseudo)
+covariance_residual_pseudo <- sum(deviations_residual * deviations_pseudo)
 
 # Calculate total variance for the combined matrix
-total_variance <- variance_real + variance_pseudo + 2 * covariance_real_pseudo
+total_variance <- variance_residual + variance_pseudo + 2 * covariance_residual_pseudo
 
 # Display results
-cat("Variance of A:", variance_real, "\n")
+cat("Variance of A:", variance_residual, "\n")
 cat("Variance of B:", variance_pseudo, "\n")
-cat("Covariance between A and B:", covariance_real_pseudo, "\n")
+cat("Covariance between A and B:", covariance_residual_pseudo, "\n")
 cat("Total Variance (A + B + 2AB):", total_variance, "\n")
 
-variance_real + variance_pseudo + 2*covariance_real_pseudo
+variance_residual + variance_pseudo + 2*covariance_residual_pseudo
 
 
-## Permanova on Real
-mydata <- data.frame(qyear=rownames(real)) %>%
+## Permanova on residual
+mydata <- data.frame(qyear=rownames(residual)) %>%
   separate(qyear, into=c("Quadrat", "Year"), sep="_") %>% 
   left_join(flora %>% 
               distinct(Quadrat, Treatment), 
             by="Quadrat")
-SS.deco.real <- vegan::adonis2(formula= real ~ Treatment*Year + Quadrat, data=mydata, strata=mydata$Quadrat, by="term", method="euclidean")
+SS.deco.residual <- vegan::adonis2(formula= residual ~ Treatment*Year + Quadrat, data=mydata, strata=mydata$Quadrat, by="term", method="euclidean")
 
 
 ## Permanova on Tot
@@ -347,7 +347,7 @@ SS.deco.nospring <- vegan::adonis2(formula= nospring ~ Treatment*Year + Quadrat,
 parted <- data.frame(
   Fraction=c(rownames(SS.deco.tot), "Pseudoturnover"),
   Share_tot=c(SS.deco.tot$SumOfSqs, 0),
-  Share_real=c(SS.deco.real$SumOfSqs, total_variance-variance_real), 
+  Share_residual=c(SS.deco.residual$SumOfSqs, total_variance-variance_residual), 
   Share_nothero=c(SS.deco.nothero$SumOfSqs, total_variance-variance_nothero),
   Share_nospring=c(SS.deco.nospring$SumOfSqs, total_variance-variance_nospring))  %>% 
   filter(Fraction != "Total") %>% 
@@ -355,7 +355,7 @@ parted <- data.frame(
               summarize_at(.vars = vars(Share_tot:Share_nospring),
                            .funs = list("sum"=~sum(.))) ) %>% 
   mutate(Share_tot_perc=round(Share_tot/Share_tot_sum*100,2),
-         Share_real_perc=round(Share_real/Share_real_sum*100,2), 
+         Share_residual_perc=round(Share_residual/Share_residual_sum*100,2), 
          Share_nothero_perc=round(Share_nothero/Share_nothero_sum*100,2), 
          Share_nospring_perc=round(Share_nospring/Share_nospring_sum*100,2), 
   ) 
@@ -377,7 +377,7 @@ parted_long <- parted %>%
                                   "Total"))) %>% 
   mutate(Fraction=fct_recode(Fraction,
                               "Residual (Quadrat x Year)" = "Residual")) %>% 
-  mutate(model=factor(model, levels=c( "tot",  "nothero", "nospring", "real"), labels=c("Total","No T", "SE only", "Real"))) %>% 
+  mutate(model=factor(model, levels=c( "tot",  "nothero", "nospring", "residual"), labels=c("Total","No T", "SE only", "Residual"))) %>% 
   arrange(Fraction)
 
 ## format table
@@ -394,7 +394,7 @@ flextable(parted_long %>%
 parted_long %>% 
   filter(Abs_Perc=="perc") %>% 
   filter(Fraction!="Total") %>% 
-  filter(model %in% c("Total", "Real")) %>% 
+  filter(model %in% c("Total", "Residual")) %>% 
   group_by(model) %>% 
   mutate(label_y=cumsum(`Explained Variation (%)`)) %>% 
   arrange(model, Fraction) %>% 
@@ -409,7 +409,7 @@ parted_long %>%
 ggplot(data=parted_long %>% 
          filter(Abs_Perc=="perc") %>% 
          filter(Fraction!="Total") %>% 
-         filter(model %in% c("Total", "Real")) %>% 
+         filter(model %in% c("Total", "Residual")) %>% 
          group_by(model) %>% 
          mutate(label_y=cumsum(`Explained Variation (%)`)) %>% 
          arrange(model, Fraction) %>% 
@@ -444,7 +444,7 @@ ggsave(last_plot(), file="../figure_tables/Figure3_ExplainedVariation_pseudoturn
 ggplot(data=parted_long %>% 
          filter(Abs_Perc=="perc") %>% 
          filter(Fraction!="Total") %>% 
-         #filter(model %in% c("Total", "Real")) %>% 
+         #filter(model %in% c("Total", "Residual")) %>% 
          group_by(model) %>% 
          mutate(label_y=cumsum(`Explained Variation (%)`)) %>% 
          arrange(model, Fraction) %>% 
